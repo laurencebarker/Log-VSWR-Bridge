@@ -34,6 +34,7 @@ const unsigned int GPowerFullScale[VMAXSCALESETTING + 1]=
   2000
 };
 
+
 //
 // picture id values for nextion display bargraphs
 // these ID values must match the image ID values in the editor!
@@ -58,10 +59,21 @@ const unsigned int GPowerBackground[VMAXSCALESETTING + 1] =
 // picture ID values for the background image for the meter display
 const unsigned int GMeterPicture[VMAXSCALESETTING + 1] =
 {
-  17,            // 2W display
+  17,           // 2W display
   18,           // 20W display
   19,           // 200W display
   20            // 2KW display
+};
+
+
+
+// picture ID values for the background image for the crossed needle display
+const unsigned int GCrossedNeedlePicture[VMAXSCALESETTING + 1] =
+{
+  21,           // 2W display
+  0,            // 20W display
+  1,            // 200W display
+  22            // 2KW display
 };
 
 
@@ -83,15 +95,27 @@ const unsigned int GMeterPicture[VMAXSCALESETTING + 1] =
 #define VVSWRFULLSCALE 10.0F                  // full scale VSWR indication
 #define VOVERSCALEDISPLAYTICKS 5             // duration to display an overscale for (units currently 100ms)
 
+//
+// paramters for crossed needle display
+//
+#define VNEEDLESIZE 234.0
+#define VMINXNEEDLEANGLE 13.5F                // angle for 0W
+#define VMAXXNEEDLEANGLE 73.0F                // angle for full scale power
+#define VXNEEDLEY1 239                        // y start position (px)
+#define VXNEEDLEFWDX1 243                     // X needle start position (px)
+#define VXNEEDLEREVX1 35                     // X needle start position (px)
+
+
 EDisplayPage GDisplayPage;                    // global set to current display page number
 int GSplashCountdown;                         // counter for splash page
 byte GUpdateItem;                             // display item being updated
 byte GCrossedNeedleItem;                      // display item in crossed needle page
-bool GPage1AxesDrawn;                         // true if page 1 axes already drawn
-int GDisplayedForward, GDisplayedReverse;     // displayed power values, to find delta
-int GDisplayedPercentFwd, GDisplayedPercentRev;     // same for percentage values
+int GDisplayedForward, GDisplayedReverse;     // displayed meter angle values, to find if needle has moved
+int GReqdAngleForward, GReqdAngleReverse;     // required angles for crossed needle
 byte GForwardOverscale, GReverseOverscale;    // set non zero if an overscale detected. =no. ticks to display for
 bool GInitialisePage;                         // true if page needs to be initialised
+bool GCrossedNeedleRedrawing;                 // true if display is being redrawn
+unsigned char GUpdateMeterTicks;              // number of ticks since a meter display updated
 
 //
 // declare pages:
@@ -114,6 +138,7 @@ NexText p0SWVersion = NexText(0, 5, "p0t4");                   // software versi
 NexButton p1ScaleBtn = NexButton(1, 3, "p1b1");                   // Scale pushbutton
 NexPicture p1Axes = NexPicture(1, 1, "p1p0");                     // graph axes
 NexButton p1DisplayBtn = NexButton(1, 2, "p1b0");                 // Display pushbutton
+NexDSButton p1PeakBtn = NexDSButton(1, 4, "p1bt0");               // normal/peak button
 
 //
 // page 2 objects:
@@ -171,6 +196,7 @@ NexTouch *nex_listen_list[] =
   &p1ScaleBtn,                                // button pressed
   &p2ScaleBtn,                                // button pressed
   &p4ScaleBtn,                                // button pressed
+  &p1PeakBtn,                                 // button pressed
   &p2PeakBtn,                                 // button pressed
   &p4PeakBtn,                                 // button pressed
   &p1DisplayBtn,                              // display button pressed
@@ -184,14 +210,52 @@ NexTouch *nex_listen_list[] =
 
 
 //
+// convert from power value to degree angle for the cross needle meter
+// return integer angle from 13.5 to 90
+//
+int GetCrossedNeedleDegrees(bool IsForward, bool IsPeak)
+{
+  float FullScale;
+  unsigned int Power;
+  float Degrees;
+  
+  FullScale = (float)GPowerFullScale[GDisplayScaleInUse];
+  if(!IsForward)
+    FullScale *= 0.2;                                     // reverse scale = a fifth of forward
+
+  if(IsPeak)
+    Power = FindPeakPower(IsForward, true);               // get power in units of 0.1 watts
+  else
+    Power = GetPowerReading(IsForward, true);
+
+//
+// calculate angle. Not full scale ~73 degrees but we allow up to 90 degrees
+// not the power reading is in tenths of watts so scale to watts too.
+//
+  Degrees = VMINXNEEDLEANGLE + (VMAXXNEEDLEANGLE - VMINXNEEDLEANGLE)* 0.1 * (float)Power / FullScale;
+  if (Degrees > 90.0)                                    // now clip, and set overscale if needed
+  {
+    Degrees = 90.0;
+    if(IsForward)
+      GForwardOverscale = VOVERSCALEDISPLAYTICKS;
+    else
+      GReverseOverscale = VOVERSCALEDISPLAYTICKS;
+  }
+  return (int)Degrees;
+}
+
+
+
+
+//
 // convert from power value to degree angle for meter
 // return 0 to 180
 //
-int GetPowerDegrees(bool IsForward, bool IsPeak)
+int GetPowerMeterDegrees(bool IsForward, bool IsPeak)
 {
   int FullScale;
-  int Power;
-  float Percent;
+  unsigned int Power;
+  float Degrees;
   
   FullScale = GPowerFullScale[GDisplayScaleInUse];
   if(IsPeak)
@@ -199,16 +263,16 @@ int GetPowerDegrees(bool IsForward, bool IsPeak)
   else
     Power = GetPowerReading(IsForward, true);
 
-  Percent = 18.0 * (float)Power / (float)FullScale;
-  if (Percent > 180.0)                                    // now clip, and set overscale if needed
+  Degrees = 18.0 * (float)Power / (float)FullScale;
+  if (Degrees > 180.0)                                    // now clip, and set overscale if needed
   {
-    Percent = 180.0;
+    Degrees = 180.0;
     if(IsForward)
       GForwardOverscale = VOVERSCALEDISPLAYTICKS;
     else
       GReverseOverscale = VOVERSCALEDISPLAYTICKS;
   }
-  return (int)Percent;
+  return (int)Degrees;
 }
 
 
@@ -220,7 +284,7 @@ int GetPowerDegrees(bool IsForward, bool IsPeak)
 int GetPowerPercent(bool IsForward, bool IsPeak)
 {
   int FullScale;
-  int Power;
+  unsigned int Power;
   float Percent;
   
   FullScale = GPowerFullScale[GDisplayScaleInUse];
@@ -399,6 +463,21 @@ void SetMeterImages(void)
 }
 
 
+
+//
+// set background for crossed needle display to set the power scale
+//
+void SetCrossedNeedleImages(void)
+{
+  byte Image;
+  if(GDisplayPageInUse == 1)
+  {
+    Image = GCrossedNeedlePicture[GDisplayScaleInUse];       // foreground image number
+    p1Axes.setPic(Image);
+  }
+}
+
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 //
 // touch event handlers: PAGE change
@@ -470,7 +549,6 @@ void p5DisplayBtnPushCallback(void *ptr)
   page1.show();
   Serial.println("page 1");
   EEWritePage(1);
-  GPage1AxesDrawn = false;
   GInitialisePage = true;
 }
 
@@ -489,12 +567,40 @@ void ScaleBtnPushCallback(void *ptr)              // display scale pushbutton
 //
 // now set display pic accordingly
 //
-  GPage1AxesDrawn = false;
-  if(GDisplayPageInUse == 2)
+  if(GDisplayPageInUse == 1)
+  {
+    SetCrossedNeedleImages();
+    GInitialisePage = true;
+  }
+  else if(GDisplayPageInUse == 2)
     SetBargraphImages();
   else if(GDisplayPageInUse == 4)
     SetMeterImages();
 }
+
+
+//
+// touch event - peak/normal button
+//
+void P1PeakBtnPushCallback(void *ptr)             // peak/normal display button
+{
+  uint32_t State;
+
+  Serial.println("PEAK button");
+  p1PeakBtn.getValue(&State);
+  if(State == 0)
+  {
+    p1PeakBtn.setText("Average");
+    GPeakDisplayInUse = false;
+  }
+  else
+  {
+    p1PeakBtn.setText("Peak");
+    GPeakDisplayInUse = true;
+  }
+  EEWritePeak(GPeakDisplayInUse);                 // store to EEPROM so we start with the same
+}
+
 
 //
 // touch event - peak/normal button
@@ -567,6 +673,7 @@ void DisplayInit(void)
   nexInit(115200);
   p1ScaleBtn.attachPush(ScaleBtnPushCallback);
   p2ScaleBtn.attachPush(ScaleBtnPushCallback);
+  p1PeakBtn.attachPush(P1PeakBtnPushCallback);
   p2PeakBtn.attachPush(P2PeakBtnPushCallback);
   p4ScaleBtn.attachPush(ScaleBtnPushCallback);
   p4PeakBtn.attachPush(P4PeakBtnPushCallback);
@@ -585,7 +692,6 @@ void DisplayInit(void)
 }
 
 
-#define VNEEDLE 215.0
 //
 // display tick
 // this is responsible for drawing the display in a mode dependent way
@@ -594,22 +700,22 @@ void DisplayTick(void)
 {
   char Str[30];
   char Str2[10];
-  int tmr;
-  bool Display = false;
   int X1, Y1, X2, Y2;
   int Forward, Reverse;
   float X,Y;
   float Angle;
+  unsigned long T1;
 //
 // handle touch display events
-//  
+//
+  
   nexLoop(nex_listen_list);
+  Str2[0] = 0;                                      //empty the string
 //
 // display dependent processing
 //
   switch(GDisplayPage)
   {
-    
     case  eSplashPage:                              // startup splash - nothing to add to display
       if(GSplashCountdown-- <= 0)
       {
@@ -646,68 +752,110 @@ void DisplayTick(void)
       }
       break;
 
-    case  eCrossedNeedlePage:                       // crossed needle VSWR page display
-      if(GPage1AxesDrawn == false)                    // load background pics
+///////////////////////////////////////////////////
+
+    case  eCrossedNeedlePage:                         // crossed needle VSWR page display
+      GUpdateMeterTicks++;                            // update ticks since last updated
+      if(GInitialisePage == true)                     // load background pics
       {
-        if (GDisplayScaleInUse == 0)
-          p1Axes.setPic(0);
-        else
-          p1Axes.setPic(1);
-        GPage1AxesDrawn = true;
+        SetCrossedNeedleImages();                     // get correct display scales
+        GInitialisePage = false;
+        GDisplayedForward = -100;                     // set illegal display angles
+        GDisplayedReverse = -100;
+        GCrossedNeedleRedrawing = false;
       }
       else
       {
-        Forward = GForwardTenthdBm/10;
-        Reverse = GReverseTenthdBm/10;
-        if((Forward != GDisplayedForward) || (Reverse != GDisplayedReverse))
-          Display = true;
-
-        if (Display && (Serial1.availableForWrite() >= 60))
+//
+// first see what the angles should be, and if they are different from what's drawn.
+// we only trest this is we are NOT already redrawing the display.
+// redraw once a second even if no change
+//
+        if(!GCrossedNeedleRedrawing)
         {
-          Display = false;
-          GDisplayedForward = Forward;
-          GDisplayedReverse = Reverse;
-          sendCommand("ref 1");
-
-          X1 = 16;
-          Y1 = 224;
-          Angle = 1.57*(Forward+96.0)/126.0;
-          if (Angle > 1.57) 
-            Angle = 1.57;
-          X = X1 + VNEEDLE * cos(Angle);
-          X2 = (int)X;
-          Y = Y1 - VNEEDLE * sin(Angle);
-          Y2 = (int)Y;
-          strcpy(Str, "line 16,224,");
-          mysprintf(Str2, X2, false);
-          strcat(Str, Str2);
-          strcat(Str, ",");
-          mysprintf(Str2, Y2, false);
-          strcat(Str, Str2);
-          strcat(Str, ",BLUE");
-          sendCommand(Str);
-
-          X1 = 224;
-          Y1 = 224;
-          Angle = 1.57*(Reverse+96.0)/126.0;
-          if (Angle > 1.57) 
-            Angle = 1.57;
-          X = X1 - VNEEDLE * cos(Angle);
-          X2 = (int)X;
-          Y = Y1 - VNEEDLE * sin(Angle);
-          Y2 = (int)Y;
-          strcpy(Str, "line 224,224,");
-          mysprintf(Str2, X2, false);
-          strcat(Str, Str2);
-          strcat(Str, ",");
-          mysprintf(Str2, Y2, false);
-          strcat(Str, Str2);
-          strcat(Str, ",GREEN");
-          sendCommand(Str);
+          Forward = GetCrossedNeedleDegrees(true, GPeakDisplayInUse);
+          Reverse = GetCrossedNeedleDegrees(false, GPeakDisplayInUse);
+          if((Forward != GDisplayedForward) || (Reverse != GDisplayedReverse) || (GUpdateMeterTicks >= 50))
+          {
+            GCrossedNeedleRedrawing = true;           // if changed, set need to redraw display and required angles
+            GDisplayedForward = Forward;
+            GDisplayedReverse = Reverse;
+            GUpdateItem = 0;                          // set to do 1st stage
+          }
         }
+
+//
+// then if we need to update display, get on and drawe it in sections
+//
+        if(GCrossedNeedleRedrawing)
+        {
+          GUpdateMeterTicks = 0;
+          switch(GUpdateItem++)
+          {
+            case 0:                                     // erase image
+              sendCommand("ref 1");
+              break;
+  
+            case 1:                                     // draw reverse power line
+              X1 = VXNEEDLEREVX1;
+              Y1 = VXNEEDLEY1;
+              Angle = (float)GDisplayedReverse * M_PI / 180.0;
+              X = X1 + VNEEDLESIZE * cos(Angle);
+              X2 = (int)X;
+              Y = Y1 - VNEEDLESIZE * sin(Angle);
+              Y2 = (int)Y;
+// get text commands
+              strcpy(Str, "line ");             // line
+              mysprintf(Str2, X1, false);
+              strcat(Str, Str2);
+              strcat(Str, ",");                 // line X1,
+              mysprintf(Str2, Y1, false);
+              strcat(Str, Str2);
+              strcat(Str, ",");                 // line X1,Y1,
+              mysprintf(Str2, X2, false);
+              strcat(Str, Str2);
+              strcat(Str, ",");                 // line X1,Y1,X2
+              mysprintf(Str2, Y2, false);
+              strcat(Str, Str2);
+              strcat(Str, ",BLUE");             // line X1,Y1,X2,Y2,BLUE
+              sendCommand(Str);
+              break;
+
+            case 2:                                     // draw forward power line
+              X1 = VXNEEDLEFWDX1;
+              Y1 = VXNEEDLEY1;
+              Angle = (float)GDisplayedForward * M_PI / 180.0;
+              X = X1 - VNEEDLESIZE * cos(Angle);
+              X2 = (int)X;
+              Y = Y1 - VNEEDLESIZE * sin(Angle);
+              Y2 = (int)Y;
+// get text commands
+              strcpy(Str, "line ");             // line
+              mysprintf(Str2, X1, false);
+              strcat(Str, Str2);
+              strcat(Str, ",");                 // line X1,
+              mysprintf(Str2, Y1, false);
+              strcat(Str, Str2);
+              strcat(Str, ",");                 // line X1,Y1,
+              mysprintf(Str2, X2, false);
+              strcat(Str, Str2);
+              strcat(Str, ",");                 // line X1,Y1,X2
+              mysprintf(Str2, Y2, false);
+              strcat(Str, Str2);
+              strcat(Str, ",BLUE");             // line X1,Y1,X2,Y2,BLUE
+              sendCommand(Str);
+              break;
+              
+            case 6:                                     // end of dwell after redraw
+              GCrossedNeedleRedrawing = false;
+              break;
+          }
+        }   // switch
       }
-      GInitialisePage = false;
-      break;
+      break;      // end of crossed needle
+
+
+///////////////////////////////////////////////////
 
     case  ePowerBargraphPage:                            // power bargraph page display
       if(GInitialisePage)
@@ -759,6 +907,9 @@ void DisplayTick(void)
         GUpdateItem = 0;
       break;
 
+
+///////////////////////////////////////////////////
+
     case  eLogBargraphPage:                              // dBm bargraph page display
       switch(GUpdateItem)
       {
@@ -791,6 +942,9 @@ void DisplayTick(void)
       GInitialisePage = true;
       break;
 
+
+///////////////////////////////////////////////////
+
     case  eMeterPage:                            // power meter page display
       if(GInitialisePage)
       {
@@ -806,7 +960,7 @@ void DisplayTick(void)
         switch(GUpdateItem)
         {
           case 0:
-            Forward = GetPowerDegrees(true, GPeakDisplayInUse);
+            Forward = GetPowerMeterDegrees(true, GPeakDisplayInUse);
             p4Meter.setValue(Forward);
             break;
   
@@ -819,6 +973,9 @@ void DisplayTick(void)
       if (GUpdateItem++ >= 14)
         GUpdateItem = 0;
       break;
+
+
+///////////////////////////////////////////////////
 
     case  eEngineeringPage:                         // engineering page with raw ADC values
       switch(GUpdateItem)
