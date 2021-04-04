@@ -50,7 +50,7 @@ void SetupTimerForInterrupt(int Milliseconds)
 void setup()
 {
   ConfigIOPins();
-  Serial.begin(9600);
+//  Serial.begin(9600);
 //
 // initialise timer to give 1ms tick interrupt
 // will count a slower period for main code
@@ -124,4 +124,7 @@ void loop()
 void ConfigIOPins(void)
 {
   pinMode(LED_BUILTIN, OUTPUT);                         // LED output
+  pinMode(VPINDEBUGSCOPE, OUTPUT);                                  // debug output
+  pinMode(VPINDEBUGSCOPE2, OUTPUT);                                  // debug output
+  
 }

@@ -18,6 +18,7 @@
 #include "globalinclude.h"
 #include "analogueio.h"
 #include "configdata.h"
+#include "iopins.h"
 #include <Nextion.h>                        // uses the Nextion class library
 
 
@@ -433,7 +434,7 @@ void SetBargraphImages(void)
     strcpy(Str,"p2j0.ppic=");
     strcat(Str, Str2);
     sendCommand(Str);
-    Image = GPowerBackground[GDisplayScaleInUse];       // foreground image number
+    Image = GPowerBackground[GDisplayScaleInUse];       // background image number
     mysprintf(Str2, Image, false);
     strcpy(Str,"p2j0.bpic=");
     strcat(Str, Str2);
@@ -491,7 +492,6 @@ void p1DisplayBtnPushCallback(void *ptr)
 {
   GDisplayPage = ePowerBargraphPage;
   page2.show();
-  Serial.println("page 2");
   EEWritePage(2);
   GInitialisePage = true;
 }
@@ -505,7 +505,6 @@ void p2DisplayBtnPushCallback(void *ptr)
 {
   GDisplayPage = eLogBargraphPage;
   page3.show();
-  Serial.println("page 3");
   EEWritePage(3);
   GInitialisePage = true;
 }
@@ -519,7 +518,6 @@ void p3DisplayBtnPushCallback(void *ptr)
 {
   GDisplayPage = eMeterPage;
   page4.show();
-  Serial.println("page 4");
   EEWritePage(4);
   GInitialisePage = true;
 }
@@ -533,7 +531,6 @@ void p4DisplayBtnPushCallback(void *ptr)
 {
   GDisplayPage = eEngineeringPage;
   page5.show();
-  Serial.println("page 5");
   EEWritePage(5);
   GInitialisePage = true;
 }
@@ -547,7 +544,6 @@ void p5DisplayBtnPushCallback(void *ptr)
 {
   GDisplayPage = eCrossedNeedlePage;
   page1.show();
-  Serial.println("page 1");
   EEWritePage(1);
   GInitialisePage = true;
 }
@@ -559,7 +555,6 @@ void p5DisplayBtnPushCallback(void *ptr)
 //
 void ScaleBtnPushCallback(void *ptr)              // display scale pushbutton
 {
-  Serial.println("scale button");
   if(GDisplayScaleInUse++ >= VMAXSCALESETTING)      // increment or wrap
     GDisplayScaleInUse = 0;
   EEWriteScale(GDisplayScaleInUse);                 // store to EEPROM so we start with the same
@@ -586,7 +581,6 @@ void P1PeakBtnPushCallback(void *ptr)             // peak/normal display button
 {
   uint32_t State;
 
-  Serial.println("PEAK button");
   p1PeakBtn.getValue(&State);
   if(State == 0)
   {
@@ -609,7 +603,6 @@ void P2PeakBtnPushCallback(void *ptr)             // peak/normal display button
 {
   uint32_t State;
 
-  Serial.println("PEAK button");
   p2PeakBtn.getValue(&State);
   if(State == 0)
   {
@@ -633,7 +626,6 @@ void P4PeakBtnPushCallback(void *ptr)             // peak/normal display button
 {
   uint32_t State;
 
-  Serial.println("PEAK button");
   p4PeakBtn.getValue(&State);
   if(State == 0)
   {
@@ -688,7 +680,6 @@ void DisplayInit(void)
   p0SWVersion.setText(Str);
   GSplashCountdown = VFIVESECONDS;                  // ticks to stay in splash page
   GUpdateItem = 0;
-  Serial.println("page 0");
 }
 
 
@@ -708,9 +699,9 @@ void DisplayTick(void)
 //
 // handle touch display events
 //
-  
   nexLoop(nex_listen_list);
   Str2[0] = 0;                                      //empty the string
+  digitalWrite(VPINDEBUGSCOPE, HIGH); // Led on
 //
 // display dependent processing
 //
@@ -721,6 +712,7 @@ void DisplayTick(void)
       {
         if(GDisplayPageInUse == 5)                  // choose the operating page from eeprom stored value
         {
+          sendCommand("bkcmd=1");
           page5.show();
           GDisplayPage = eEngineeringPage;
           GInitialisePage = true;
@@ -1019,10 +1011,11 @@ void DisplayTick(void)
           p5VSWR.setText(Str);
           break;        
       }
-      if (GUpdateItem++ >= VMAXENGITEM)
+//      if (GUpdateItem++ >= VMAXENGITEM)
         GUpdateItem = 0;
 
-      GInitialisePage = true;
+      GInitialisePage = false;
       break;
   }
+  digitalWrite(VPINDEBUGSCOPE, LOW); // Led on
 }

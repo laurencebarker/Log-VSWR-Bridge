@@ -122,7 +122,7 @@ void EEWriteScale(byte Value)
 
 
 //
-// function to write new display scale
+// function to write new display average/peak
 //
 void EEWritePeak(bool Value)
 {
