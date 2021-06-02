@@ -124,7 +124,4 @@ void loop()
 void ConfigIOPins(void)
 {
   pinMode(LED_BUILTIN, OUTPUT);                         // LED output
-  pinMode(VPINDEBUGSCOPE, OUTPUT);                                  // debug output
-  pinMode(VPINDEBUGSCOPE2, OUTPUT);                                  // debug output
-  
 }

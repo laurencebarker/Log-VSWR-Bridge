@@ -17,7 +17,4 @@
 #define VPINFWDPOWERADC A0        // analogue input
 #define VPINREVPOWERADC A1        // analogue input
 
-#define VPINDEBUGSCOPE 12         // oscilloscope write pin for timing
-#define VPINDEBUGSCOPE2 11        // oscilloscope write pin for timing
-
 #endif //not defined

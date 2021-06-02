@@ -701,7 +701,6 @@ void DisplayTick(void)
 //
   nexLoop(nex_listen_list);
   Str2[0] = 0;                                      //empty the string
-  digitalWrite(VPINDEBUGSCOPE, HIGH); // Led on
 //
 // display dependent processing
 //
@@ -710,9 +709,9 @@ void DisplayTick(void)
     case  eSplashPage:                              // startup splash - nothing to add to display
       if(GSplashCountdown-- <= 0)
       {
+        sendCommand("bkcmd=1");                   // re-send in case it has been forgotten
         if(GDisplayPageInUse == 5)                  // choose the operating page from eeprom stored value
         {
-          sendCommand("bkcmd=1");
           page5.show();
           GDisplayPage = eEngineeringPage;
           GInitialisePage = true;
@@ -1017,5 +1016,4 @@ void DisplayTick(void)
       GInitialisePage = false;
       break;
   }
-  digitalWrite(VPINDEBUGSCOPE, LOW); // Led on
 }
